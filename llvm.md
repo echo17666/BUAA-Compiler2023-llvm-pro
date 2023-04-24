@@ -174,6 +174,7 @@ $ lli out.ll
 - Module ID：指明 **`Module`** 的标识
 - source_filename：表明该Module是从什么文件编译得到的。如果是通过链接得到的，此处会显示 `llvm-link`
 - target datalayout 和 target triple 是程序标签属性说明，和硬件/系统有关。其各个部分说明如下图所示。
+
 ![](image/0-2.png)
 ##### <p align="center">图 0-2 target解释</p>
 
