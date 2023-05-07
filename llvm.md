@@ -223,7 +223,8 @@ CompUnit -> FuncDef
 FuncDef  -> FuncType Ident '(' ')' Block
 FuncType -> 'int'
 Ident    -> 'main'
-Block    -> '{' Stmt '}'
+Block        -> '{' { BlockItem } '}'
+BlockItem    -> Stmt
 Stmt     -> 'return' Number ';'
 ```
 对于一个无参的函数，首先需要从AST获取函数的名称，返回值类型。然后分析函数体的Block。Block中的Stmt可以是return语句，也可以是其他语句，但是这里只考虑return语句。return语句中的Number在现在默认是**常数**。
@@ -248,7 +249,7 @@ UnaryOp    -> '+' | '-'
 ##### <p align="center">图 1-1 简单四则运算AST参考图</p>
 那么在生成的时候，我们的顺序是从左到右，从上到下。所以我们可以先生成 `1`，然后生成 `2`，然后生成 `1+2`，然后生成 `3`，然后生成 `4`，然后生成 `3*4`，最后生成 `1+2+3*4`。那对于1+2的**AddExp**，在其生成的指令中，1和2的值就类似于综合属性，即从AddExp的实例的值（3）由产生式右边的值（1和2）推导出来。而对于3\*4的**MulExp**，其生成的指令中3和4的值就类似于继承属性，即从MulExp的实例的值（12）由产生式左边的值（3和4）推导出来。最后，对于1+2+3\*4的**AddExp**，生成指令的实例的值就由产生式右边的AddExp的值（3）和MulExp的值（12）推导出来。
 
-同理，对于数字前的正负，我们可以看做是**0和其做一次AddExp**，即+1其实就是0+1 （其实正号甚至都不用去管他） ，-1其实就是0-1。所以在生成代码的时候，可以当作一个特殊的AddExp来处理。
+同理，对于数字前的正负，我们可以看做是**0和其做一次AddExp**，即+1其实就是0+1 （其实正号甚至都不用去管） ，-1其实就是0-1。所以在生成代码的时候，可以当作一个特殊的AddExp来处理。
 ### 测试样例
 源程序
 ```c
@@ -298,3 +299,217 @@ define dso_local i32 @main() {
     ret i32 %36
 }
 ```
+## 2. 全局变量与局部变量
+
+### 全局变量
+本章实验涉及的文法包括：
+```c
+CompUnit ->  {Decl} FuncDef
+Decl         -> ConstDecl | VarDecl
+ConstDecl    -> 'const' BType ConstDef { ',' ConstDef } ';'
+BType        -> 'int'
+ConstDef     -> Ident '=' ConstInitVal
+ConstInitVal -> ConstExp
+ConstExp     -> AddExp
+VarDecl      -> BType VarDef { ',' VarDef } ';'
+VarDef       -> Ident 
+                | Ident '=' InitVal
+InitVal      -> Exp 
+```
+在llvm中，全局变量使用的是和函数一样的全局标识符 `@` ，所以全局变量的写法其实和函数的定义几乎一样。在我们的实验中，全局变/常量声明中指定的初值表达式必须是**常量表达式**。不妨举几个例子：
+```c
+//以下都是全局变量
+int a=5;
+int b=2+3;
+```
+生成的llvm如下所示
+```llvm
+@a = dso_local global i32 5
+@b = dso_local global i32 5
+```
+可以看到，对于全局变量中的常量表达式，在生成的llvm中我们需要算出其**具体的值**。
+
+### 局部变量
+本章内容涉及文法包括：
+```c
+Block        -> '{' { BlockItem } '}'
+BlockItem    -> Decl | Stmt
+```
+局部变量使用的标识符是 `%` 。与全局变量不同，局部变量在赋值前需要申请一块内存。在对局部变量操作的时候，我们也需要采用**load/store**来对内存进行操作。
+同样的，我们举个例子来说明一下：
+```c
+//以下都是局部变量
+int a=1+2;
+```
+生成的llvm如下所示
+```llvm
+%1 = alloca i32
+%2 = add i32 1, 2
+store i32 %2, i32* %1
+```
+
+### 符号表设计与作用域
+这一章我们将主要考虑变量，包括全局变量和局部变量以及作用域的说明。不可避免地，我们需要进行符号表的设计。
+
+涉及到的文法如下：
+```c
+Stmt -> LVal '=' Exp ';' 
+      | [Exp] ';'
+      | 'return' Exp ';'
+```
+我们举个最简单的例子：
+```c
+int a=1;
+int b=2+a;
+int main(){
+  int c=b+4;
+  return a+b+c;
+}
+```
+
+如果我们需要将上述代码转换为llvm，我们应当怎么考虑呢？直观来看，a和b是**全局变量**，c是**局部变量**。我们首先将全局变量a和b进行赋值，然后到main函数内部，我们对c进行赋值。那么在 `return a+b+c;` 的时候，根据上个实验，llvm最后几行应该是
+```llvm
+%sumab = add i32 %a, %b
+%sumabc = add i32 %sumab, %c
+ret i32 %sumabc
+```
+问题就是，我们如何获取标识符 `%a，%b，%c`，这时候我们的符号表的作用就体现出来了。简单来说，符号表类似于一个索引。通过符号表，我们可以很快速的找到变量对应的标识符。
+
+对于上面的c语言程序，llvm生成如下：
+```llvm
+@a = dso_local global i32 1
+@b = dso_local global i32 3
+define dso_local i32 @main() {
+    %1 = alloca i32          ;分配c内存
+    %2 = load i32, i32* @b   ;读取全局变量b
+    %3 = add i32 %2, 4       ;计算b+4
+    store i32 %3, i32* %1    ;把b+4的值存入c
+    %4 = load i32, i32* @a   ;读取全局变量a
+    %5 = load i32, i32* @b   ;读取全局变量b
+    %6 = add i32 %4, %5      ;计算a+b;
+    %7 = load i32, i32* %1   ;读取c
+    %8 = add i32 %6, %7      ;计算(a+b)+c
+    ret i32 %8               ;return
+}
+```
+不难发现，对于全局变量的使用，可以直接使用全局变量的全局标识符（例如@a），而对于局部变量，我们则需要使用分配内存的标识符。由于标识符是自增的数字，所以快速找到对应变量的标识符就是符号表最重要的作用。同学们可以选择遍历一遍AST后造出一张统一的符号表，然后根据完整的符号表进行代码生成，也可以在遍历AST的同时造出一张栈式符号表，根据实时的栈式符号表生成相应代码。符号表存储的东西同学们可以自己设计，下面给出符号表的简略示例，同学们在实验中可以根据自己需要自行设计。
+
+同时，同学们需要注意变量的作用域，即语句块内声明的变量的生命周期在该语句块内，且内层代码块覆盖外层代码块。
+```c
+int a=1;
+int b=2;
+int c=3;
+int main(){
+  int d=4;
+  int e=5;
+  {//blockA
+    int a=7;
+    int e=8;
+    int f=9;
+  }
+  int f=10;
+}
+```
+在上面的程序中，在**blockA**中，a的值为7，覆盖了全局变量a=1，e覆盖了main中的e=5，而在main的最后一行，f并不存在覆盖，因为main外层不存在其他f的定义。
+
+同样的，下面给出上述程序的llvm代码：
+```llvm
+@a = dso_local global i32 1
+@b = dso_local global i32 2
+@c = dso_local global i32 3
+
+define dso_local i32 @main() {
+    %1 = alloca i32
+    store i32 4, i32* %1
+    %2 = alloca i32
+    store i32 5, i32* %2
+    %3 = alloca i32
+    store i32 7, i32* %3
+    %4 = alloca i32
+    store i32 8, i32* %4
+    %5 = alloca i32
+    store i32 9, i32* %5
+    %6 = alloca i32
+    store i32 10, i32* %6
+}
+```
+上述程序的符号表简略示意如下：
+
+![](image/2-1.png)
+##### <p align="center">图 2-1 完整符号表与栈式符号表示意图</p>
+
+### 测试样例
+源程序
+```c
+int a=1;
+int b=2+a;
+int c=3*(b+------10);
+int main(){
+  int d=4+c;
+  int e=5*d;
+  {
+    a=a+5;
+    int b=a*2;
+    a=b;
+    int f=20;
+    e=e+a*20;
+  }
+  int f=10;
+  return e*f;
+}
+```
+llvm参考如下：
+```llvm
+@a = dso_local global i32 1
+@b = dso_local global i32 3
+@c = dso_local global i32 39
+define dso_local i32 @main() {
+    %1 = alloca i32
+    %2 = load i32, i32* @c
+    %3 = add i32 4, %2
+    store i32 %3, i32* %1
+    %4 = alloca i32
+    %5 = load i32, i32* %1
+    %6 = mul i32 5, %5
+    store i32 %6, i32* %4
+    %7 = load i32, i32* @a
+    %8 = load i32, i32* @a
+    %9 = add i32 %8, 5
+    store i32 %9, i32* @a
+    %10 = alloca i32
+    %11 = load i32, i32* @a
+    %12 = mul i32 %11, 2
+    store i32 %12, i32* %10
+    %13 = load i32, i32* @a
+    %14 = load i32, i32* %10
+    store i32 %14, i32* @a
+    %15 = alloca i32
+    store i32 20, i32* %15
+    %16 = load i32, i32* %4
+    %17 = load i32, i32* %4
+    %18 = load i32, i32* @a
+    %19 = mul i32 %18, 20
+    %20 = add i32 %17, %19
+    store i32 %20, i32* %4
+    %21 = alloca i32
+    store i32 10, i32* %21
+    %22 = load i32, i32* %4
+    %23 = load i32, i32* %21
+    %24 = mul i32 %22, %23
+    ret i32 %24
+}
+
+```
+return结果为198？
+## 3. 函数的定义及调用
+### 函数定义
+函数定义，参数，函数内部主体
+### 函数调用
+包括主函数调用和函数调用/自调用
+### 测试样例
+
+## 4. 条件语句与短路求值
+### 条件语句
+与或
+### 短路求值
+### 测试样例
