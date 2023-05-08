@@ -213,7 +213,7 @@ $ lli out.ll
 | ret     | `ret <type> <value> `  ,`ret void  ` | 退出当前函数，并返回值 |
 
 ### 一些说明
-- 如果目标生成到LLVM语言的同学请注意，clang 默认生成的虚拟寄存器是**按数字顺序**命名的，LLVM 限制了所有数字命名的虚拟寄存器必须严格地**从 0 开始递增**，且每个函数参数和基本块都会占用一个编号。如果你不能确定怎样用数字命名虚拟寄存器，请使用**字符串命名**虚拟寄存器。
+- 如果目标生成到LLVM语言的同学请注意，clang 默认生成的虚拟寄存器是**按数字顺序**命名的，LLVM 限制了所有数字命名的寄存器必须严格地**从 0 开始递增**，且每个函数参数和基本块都会占用一个编号。如果你不能确定怎样用数字命名虚拟寄存器，请使用**字符串命名**虚拟寄存器。
 - 由于本指导书的大量测试样例都是LLVM IR的代码，所以我们主要讲通过 **`AST`** 生成对应的代码。想通过LLVM IR的同学可以根据对应的 **`Module`** 结构自行存储数据，然后根据Module生成对应的LLVM IR代码自测。
 ## 1. 主函数与常量表达式
 ### 主函数
@@ -500,14 +500,141 @@ define dso_local i32 @main() {
 }
 
 ```
-return结果为198？
-## 3. 函数的定义及调用
-### 函数定义
-函数定义，参数，函数内部主体
-### 函数调用
-包括主函数调用和函数调用/自调用
-### 测试样例
+echo $?的结果为**198**
 
+> 我相信各位如果去手动计算的话，会算出来结果是4550。然而由于echo $?的返回值只截取最后一个字节，也就是8位，所以 `4550 mod 256 = 198`
+
+###### 废话，这种例子当然是随便编的awa，结果是什么我自己都不知道。
+## 3. 函数的定义及调用
+> 本章主要涉及**不含数组**的函数的定义，调用等。
+### 库函数
+涉及文法有：
+```c
+Stmt         -> LVal '=' 'getint''('')'';'
+                | 'printf''('FormatString{','Exp}')'';' 
+
+```
+
+
+首先我们添加**库函数**的调用。在实验中，我们的llvm代码中，库函数的声明如下：
+```llvm
+declare i32 @getint()
+declare void @putint(i32)
+declare void @putch(i32)
+declare void @putstr(i8*)
+```
+只要在llvm代码开头加上这些声明，就可以在后续代码中使用这些库函数。同时对于用到库函数的llvm代码，我们在编译时也需要使用llvm-link命令将库函数链接到我们的代码中。
+
+对于库函数的使用，在我们的文法中其实就包含两句，即`getint`和`printf`。其中，`printf`包含了有Exp和没有Exp的情况。同样的，我们给出一个简单的例子：
+```c
+int main(){
+  int a;
+  a=getint();
+  printf("hello:%d",a);
+  return 0;
+}
+```
+llvm代码如下：
+```llvm
+declare i32 @getint()
+declare void @putint(i32)
+declare void @putch(i32)
+declare void @putstr(i8*)
+
+define dso_local i32 @main() {
+    %1 = alloca i32
+    %2 = load i32, i32* %1
+    %3 = call i32 @getint() 
+    store i32 %3, i32* %1
+    %4 = load i32, i32* %1
+    call void @putch(i32 104)
+    call void @putch(i32 101)
+    call void @putch(i32 108)
+    call void @putch(i32 108)
+    call void @putch(i32 111)
+    call void @putch(i32 58)
+    call void @putint(i32 %4)
+    ret i32 0
+}
+```
+不难看出，`call i32 @getint()` 即为调用getint的语句，对于其他的任何函数的调用也是像这样去写。而对于`printf`，我们需要将其转化为多条`putch`和`putint`的调用，或者使用`putstr`以字符串输出。这里需要注意的是，`putch`和`putint`的参数都是 `i32` 类型，所以我们需要将字符串中的字符转化为对应的ascii码。
+
+### 函数定义与调用
+涉及文法如下：
+```c
+CompUnit     -> [CompUnit] (Decl | FuncDef)
+FuncDef      -> FuncType Ident '(' [FuncFParams] ')' Block 
+FuncType     -> 'void' | 'int' 
+FuncFParams  -> FuncFParam { ',' FuncFParam } 
+FuncFParam   -> BType Ident ['[' ']' { '[' Exp ']' }]
+UnaryExp     -> PrimaryExp
+                | Ident '(' [FuncRParams] ')'
+                | UnaryOp UnaryExp 
+```
+其实之前的main函数也是一个函数，即主函数。这里我们将其拓广到一般函数。对于一个函数，其特征包括**函数名**，**函数返回类型**和**参数**。在本实验中，函数返回类型只有 **`int`** 和 **`void`** 两种。由于目前只有零维整数作为参数，所以参数的类型统一都是`i32`。FuncFParams之后的Block则与之前主函数内处理方法一样。值得一提的是，由于每个**临时寄存器**和**基本块**占用一个编号，所以没有参数的函数的第一个临时寄存器的编号应该从**1**开始，因为函数体入口占用了一个编号0。而有参数的函数，参数编号从**0**开始，进入Block后需要跳过一个基本块入口的编号（可以参考测试样例）。
+
+当然，如果全部采用字符串编号寄存器，上述问题都不会存在。
+
+对于函数的调用，参考之前库函数的处理，不难发现，函数的调用其实和**全局变量**的调用基本是一样的，即用`@函数名`表示。所以函数部分和**符号表**有着密切关联。同学们需要在函数定义和函数调用的时候对符号表进行操作。对于有参数的函数调用，则在调用的函数内传入参数。对于没有返回值的函数，则直接`call`即可，不用为语句赋一个实例。
+
+### 测试样例
+源代码：
+```c
+int a=1000;
+int aaa(int a,int b){
+        return a+b;
+}
+void ab(){
+        a=1200;
+        return;
+}
+int main(){
+        ab();
+        int b=a,a;
+        a=getint();
+        printf("%d",aaa(a,b));
+        return 0;
+}
+```
+llvm输出参考：
+```llvm
+declare i32 @getint()
+declare void @putint(i32)
+declare void @putch(i32)
+declare void @putstr(i8*)
+@a = dso_local global i32 1000
+define dso_local i32 @aaa(i32 %0, i32 %1){
+  %3 = alloca i32
+  %4 = alloca i32
+  store i32 %0, i32* %3
+  store i32 %1, i32* %4
+  %5 = load i32, i32* %3
+  %6 = load i32, i32* %4
+  %7 = add nsw i32 %5, %6
+  ret i32 %7
+}
+define dso_local void @ab(){
+  store i32 1200, i32* @a
+  ret void
+}
+
+define dso_local i32 @main(){
+  %1 = alloca i32
+  %2 = alloca i32
+  call void @ab()
+  %3 = load i32, i32* @a
+  store i32 %3, i32* %1
+  %4 = call i32 @getint()
+  store i32 %4, i32* %2
+  %5 = load i32, i32* %2
+  %6 = load i32, i32* %1
+  %7 = call i32 @aaa(i32 %5, i32 %6)
+  call void @putint(i32 %7)
+  ret i32 0
+}
+```
+- 输入：1000
+- 输出：2200
 ## 4. 条件语句与短路求值
 ### 条件语句
 与或
