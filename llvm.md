@@ -637,6 +637,176 @@ define dso_local i32 @main(){
 - 输出：2200
 ## 4. 条件语句与短路求值
 ### 条件语句
-与或
+涉及文法如下
+```c
+Stmt        -> 'if' '(' Cond ')' Stmt [ 'else' Stmt ]
+Cond        -> LOrExp 
+RelExp      -> AddExp
+             | RelExp ('<' | '>' | '<=' | '>=') AddExp
+EqExp       -> RelExp
+             | EqExp ('==' | '!=') RelExp
+LAndExp     -> EqExp
+             | LAndExp '&&' EqExp
+LOrExp      -> LAndExp
+             | LOrExp '||' LAndExp 
+```
+在条件语法中，我们需要进行条件的判断与选择。这时候就涉及到基本块的标号。在llvm中，每个**临时寄存器**和**基本块**占用一个编号。所以对于纯数字编号的llvm，这里就需要进行**回填**操作。对于在代码生成前已经完整生成符号表的同学，这里就会显得十分容易。对于在代码生成同时生成符号表的同学，也可以采用**栈**的方式去回填编号，对于采用字符串编号的则没有任何要求。
+
+要写出条件语句，首先要理清楚逻辑。在上述文法中，最重要的莫过于下面这一条语法
+```c
+Stmt        -> 'if' '(' Cond ')' Stmt1 [ 'else' Stmt2 ]  (BasicBlock3)
+```
+为了方便说明，对上述文法的两个Stmt编号为Stmt1和2。在这条语句之后基本块假设叫BasicBlock3。不难发现，条件判断的逻辑如左下图。
+![](image/4-1.png)
+##### <p align="center">图 4-1 条件判断流程示意图与基本块流图</p>
+
+首先进行Cond结果的判断，如果结果为1则进入Stmt1，如果Cond结果为0，若文法有else则i将纳入Stmt2，否则进入下一条文法的基本块BasicBlock3。在Stmt1或Stmt2执行完成后都需要跳转到BasicBlock3。对于一个llvm程序来说，对一个含else的条件分支，其基本块构造可以如右上图所示。
+
+如果能够理清楚基本块跳转的逻辑，那么在写代码的时候就会变得十分简单。
+
+这时候我们再回过头去看Cond里面的代码，即LOr和Land，Eq和Rel。不难发现，其处理方式和加减乘除非常像，除了运算结果都是1位(i1)而非32位(i32)。同学们可能需要用到 `trunc`或者 `zext` 指令进行类型转换。
+
 ### 短路求值
+可能有的同学会认为，反正对于llvm来说，跳转与否只看Cond的值，所以我只要把Cond算完结果就行，不会影响正确性。不妨看一下下面这个例子：
+```c
+int a=5;
+int change(){
+  a=6;
+  return a;
+}
+int main(){
+  if(1||change()){
+    printf("%d",a);
+  }
+  return 0;
+}
+```
+如果要将上面这段代码翻译为llvm，同学们会怎么做？如果按照传统方法，即先统一计算Cond，则一定会执行一次change()函数，把全局变量的值变为6。但事实上，由于短路求值的存在，在读完1后，整个Cond的值就已经被确定了，即无论1||后面跟的是什么，都不影响Cond的结果，那么根据短路求值，后面的东西就不应该执行。所以上述代码的输出应当为5而不是6，也就是说，我们的llvm不能够单纯的把Cond计算完后再进行跳转。这时候我们就需要对Cond的跳转逻辑进行改写。
+
+改写之前我们不妨思考一个问题，即什么时候跳转。根据短路求值，只要条件判断出现“短路”，即不需要考虑后续与或参数的情况下就已经能确定值的时候，就可以进行跳转。或者更简单的来说，当LOrExp值为1或者LAndExp值为0的时候，就已经没有必要再进行计算了。
+```c
+Cond        -> LOrExp 
+LOrExp      -> LAndExp
+             | LOrExp '||' LAndExp 
+LAndExp     -> EqExp
+             | LAndExp '&&' EqExp
+```
+- 对于连或来说，只要其中一个LOrExp或最后一个LAndExp为1，即可直接跳转Stmt1。
+- 对于连与来说，只要其中一个LAndExp或最后一个EqExp为0，则直接进入下一个LOrExp。如果当前为连或的最后一项，则直接跳转Stmt2（有else）或BasicBlock3（没else）
+
+上述两条规则即为短路求值的最核心算法，示意图如下。
+![](image/4-2.png)
+##### <p align="center">图 4-2 短路求值算法示意图</p>
+
+### 测试样例
+```c
+int a=1;
+int func(){
+    a=2;return 1;
+}
+
+int func2(){
+    a=4;return 10;
+}
+int func3(){
+    a=3;return 0;
+}
+int main(){
+    if(0||func()&&func3()||func2()){printf("%d--1",a);}
+    if(1||func3()){printf("%d--2",a);}
+    if(0||func3()||func()<func2()){printf("%d--3",a);}
+    return 0;
+}
+```
+```llvm
+declare i32 @getint()
+declare void @putint(i32)
+declare void @putch(i32)
+declare void @putstr(i8*)
+@a = dso_local global i32 1
+define dso_local i32 @func(){
+  store i32 2, i32* @a,
+  ret i32 1
+}
+define dso_local i32 @func2(){
+  store i32 4, i32* @a
+  ret i32 10
+}
+define dso_local i32 @func3(){
+  store i32 3, i32* @a
+  ret i32 0
+}
+define dso_local i32 @main(){
+  %1 = alloca i321
+  store i32 0, i32* %1
+  %2 = call i32 @func()
+  %3 = icmp ne i32 %2, 0
+  br i1 %3, label %4, label %7
+
+4:
+  %5 = call i32 @func3()
+  %6 = icmp ne i32 %5, 0
+  br i1 %6, label %10, label %7
+
+7:
+  %8 = call i32 @func2()
+  %9 = icmp ne i32 %8, 0
+  br i1 %9, label %10, label %13
+
+10:
+  %11 = load i32, i32* @a
+  call void @putint(i32 %11)
+  call void @putch(i32 45)
+  call void @putch(i32 45)
+  call void @putch(i32 49)
+  br label %12
+
+12:
+  %13 = load i32, i32* @a
+  call void @putint(i32 %13)
+  call void @putch(i32 45)
+  call void @putch(i32 45)
+  call void @putch(i32 50)
+  %14 = call i32 @func3()
+  %15 = icmp ne i32 %14, 0
+  br i1 %15, label 20, label %16
+
+16:
+  %17 = call i32 @func()
+  %18 = call i32 @func2()
+  %19 = icmp slt i32 %17, %18
+  br i1 %19, label %20, label %22
+
+20:
+  %21 = load i32, i32* @a
+  call void @putint(i32 %21)
+  call void @putch(i32 45)
+  call void @putch(i32 45)
+  call void @putch(i32 51)
+  br label %22
+
+22:
+  ret i32 0
+}
+```
+## 5. 循环与中断
+### 循环
+涉及文法如下：
+```c
+Stmt  -> 'for' '(' Cond ')' Stmt
+       | 'break' ';'
+       | 'continue' ';'
+```
+如果经过了上一章的学习，这一章其实难度就小了不少。对于文法，我们同样可以改写为
+```c
+Stmt  -> 'for' '(' Cond ')' Stmt (BasicBlock)
+```
+不难发现，对Cond=1，跳转到Stmt，对Cond=0，跳转到BasicBlock。而与之前不同的是，Stmt结束后都要跳转回Cond基本块进行条件的再次判断，以达到循环的目的。
+### break/continue
+对于break和continue，直观理解为，break跳出循环，continue跳过本次循环。再通俗点说就是，break跳转到的是BasicBlock，而continue跳转到的是Cond。这样就能达到我们的目的了。
+## 6. 数组与函数
+### 数组
+getelementptr
+### 数组修改
+数组传参维度变化
 ### 测试样例
