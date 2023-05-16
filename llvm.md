@@ -724,71 +724,107 @@ declare void @putint(i32)
 declare void @putch(i32)
 declare void @putstr(i8*)
 @a = dso_local global i32 1
-define dso_local i32 @func(){
-  store i32 2, i32* @a,
-  ret i32 1
+define dso_local i32 @func() {
+    %1 = load i32, i32* @a
+    store i32 2, i32* @a
+    ret i32 1
 }
-define dso_local i32 @func2(){
-  store i32 4, i32* @a
-  ret i32 10
+define dso_local i32 @func2() {
+    %1 = load i32, i32* @a
+    store i32 4, i32* @a
+    ret i32 10
 }
-define dso_local i32 @func3(){
-  store i32 3, i32* @a
-  ret i32 0
+define dso_local i32 @func3() {
+    %1 = load i32, i32* @a
+    store i32 3, i32* @a
+    ret i32 0
 }
-define dso_local i32 @main(){
-  %1 = alloca i321
-  store i32 0, i32* %1
-  %2 = call i32 @func()
-  %3 = icmp ne i32 %2, 0
-  br i1 %3, label %4, label %7
 
-4:
-  %5 = call i32 @func3()
-  %6 = icmp ne i32 %5, 0
-  br i1 %6, label %10, label %7
+define dso_local i32 @main() {
+    br label %1
 
-7:
-  %8 = call i32 @func2()
-  %9 = icmp ne i32 %8, 0
-  br i1 %9, label %10, label %13
+1:
+    %2 = icmp ne i32 0, 0
+    br i1 %2, label %12, label %3
 
-10:
-  %11 = load i32, i32* @a
-  call void @putint(i32 %11)
-  call void @putch(i32 45)
-  call void @putch(i32 45)
-  call void @putch(i32 49)
-  br label %12
+3:
+    %4 = call i32 @func()
+    %5 = icmp ne i32 0, %4
+    br i1 %5, label %6, label %9
+
+6:
+    %7 = call i32 @func3()
+    %8 = icmp ne i32 0, %7
+    br i1 %8, label %12, label %9
+
+9:
+    %10 = call i32 @func2()
+    %11 = icmp ne i32 0, %10
+    br i1 %11, label %12, label %14
 
 12:
-  %13 = load i32, i32* @a
-  call void @putint(i32 %13)
-  call void @putch(i32 45)
-  call void @putch(i32 45)
-  call void @putch(i32 50)
-  %14 = call i32 @func3()
-  %15 = icmp ne i32 %14, 0
-  br i1 %15, label 20, label %16
+    %13 = load i32, i32* @a
+    call void @putint(i32 %13)
+    call void @putch(i32 45)
+    call void @putch(i32 45)
+    call void @putch(i32 49)
+    br label %14
 
-16:
-  %17 = call i32 @func()
-  %18 = call i32 @func2()
-  %19 = icmp slt i32 %17, %18
-  br i1 %19, label %20, label %22
+14:
+    br label %15
+
+15:
+    %16 = icmp ne i32 0, 1
+    br i1 %16, label %20, label %17
+
+17:
+    %18 = call i32 @func3()
+    %19 = icmp ne i32 0, %18
+    br i1 %19, label %20, label %22
 
 20:
-  %21 = load i32, i32* @a
-  call void @putint(i32 %21)
-  call void @putch(i32 45)
-  call void @putch(i32 45)
-  call void @putch(i32 51)
-  br label %22
+    %21 = load i32, i32* @a
+    call void @putint(i32 %21)
+    call void @putch(i32 45)
+    call void @putch(i32 45)
+    call void @putch(i32 50)
+    br label %22
 
 22:
-  ret i32 0
+    br label %23
+
+23:
+    %24 = icmp ne i32 0, 0
+    br i1 %24, label %34, label %25
+
+25:
+    %26 = call i32 @func3()
+    %27 = icmp ne i32 0, %26
+    br i1 %27, label %34, label %28
+
+28:
+    %29 = call i32 @func()
+    %30 = call i32 @func2()
+    %31 = icmp slt i32 %29, %30
+    %32 = zext i1 %31 to i32
+    %33 = icmp ne i32 0, %32
+    br i1 %33, label %34, label %36
+
+34:
+    %35 = load i32, i32* @a
+    call void @putint(i32 %35)
+    call void @putch(i32 45)
+    call void @putch(i32 45)
+    call void @putch(i32 51)
+    br label %36
+
+36:
+    ret i32 0
 }
+
 ```
+> 注：由于历史遗留问题，跳转参考代码较乱，参考价值不大，同学们可以自行设计，仅需要保证短路求值正确性即可。
+- 输出：4--14--24--3
 ## 5. 循环与中断
 ### 循环
 涉及文法如下：
@@ -806,7 +842,172 @@ Stmt  -> 'for' '(' Cond ')' Stmt (BasicBlock)
 对于break和continue，直观理解为，break跳出循环，continue跳过本次循环。再通俗点说就是，break跳转到的是BasicBlock，而continue跳转到的是Cond。这样就能达到我们的目的了。
 ## 6. 数组与函数
 ### 数组
-getelementptr
-### 数组修改
-数组传参维度变化
+在数组的编写中，同学们会频繁用到 **`getElementPtr`** 指令，故先系统介绍一下这个指令的用法。
+
+getElementPtr指令的工作是计算地址。其本身不对数据做任何访问与修改。其语法如下：
+```llvm
+<result> = getelementptr <ty>, <ty>* <ptrval>, {<ty> <index>}*
+```
+现在我们来理解一下上面这一条指令。第一个 `<ty>` 表示的是第一个索引所指向的类型，有时也是**返回值的类型**。第二个 `<ty>` 表示的是后面的指针基地址 `<ptrval>` 的类型， `<ty> <index>` 表示的是一组索引的类型和值，在本实验中索引的类型为i32。索引指向的基本类型确定的是增加索引值时指针的偏移量。
+
+说完理论，我们结合一个实例来讲解。考虑数组 **`a[5][7]`**，需要获取 **`a[3][4]`** 的地址我们有如下写法：
+```llvm
+%1 = getelementptr [5 x [7 x i32]], [5 x [7 x i32]]* @a, i32 0, i32 3
+%2 = getelementptr [7 x i32], [7 x i32]* %1, i32 0, i32 4
+
+%3 = getelementptr [5 x [7 x i32]], [5 x [7 x i32]]* @a, i32 0, i32 3, i32 4
+
+%4 = getelementptr [5 x [7 x i32]], [5 x [7 x i32]]* @a, i32 0, i32 0
+%5 = getelementptr [7 x i32], [7 x i32]* @4, i32 3, i32 0,
+%6 = getelementptr i32, i32* %5, i32 4
+```
+
+![](image/6-1.png)
+
+##### <p align="center">图 6-1 getElementPtr示意图</p>
+
+对于 **`%6`** ，其只有一组索引**i32 4**，所以索引使用基本类型为**i32**，基地址为 **`%5`** ，索引值为4，所以指针相对于%5（21号格子）前进了**4个i32**类型，即指向了25号格子，返回类型为i32*。
+
+而当存在多组索引值的时候，每多一组索引值，索引使用基本类型就要去掉一层。再拿上面举个例子，对于 **`%1`** ，基地址为@a，类型为 **[5 x [7 x i32]]** 。第一组索引值为**0**，所以指针前进0个0x5x7个i32，第二组索引值为**3**，这时候就要**去掉一层**，即把[5 x [7 x i32]]中的5去掉，即索引使用的基本类型为 **[7 x i32]** ，指针向前移动3x7个i32。返回类型为 **[7 x i32]\***，而对于 **`%2`** ，第一组索引值为**0**，其首先前进了0x7个i32，第二组索引值为**4**，去掉一层，索引基本类型为i32，指针向前移动4个i32，指向25号格子
+
+当然，可以一步到位，如 **`%3`** ，后面跟了三组索引值，第一组让指针前进0x5x7个i32，第二组让指针前进3x7个i32，第三组让指针前进4个i32，索引使用基本类型去掉两层，为**i32\***。
+
+对于 **`%4`** ，虽然其两组索引值都是0，但是其索引使用基本类型去掉了一层，变为了 **[7 x i32]** 。在 **`%5`** 的时候，第一组索引值为3，即指针前进3x7个i32，第二组索引值为0，即指针前进0个i32，索引使用基本类型变为i32，返回指针类型为 **i32\***。
+
+当然，同学们也可以直接将所有高维数组模拟为1维数组，例如对于**a[5][7]**中取**a[3][4]**，可以直接将a转换为一个**a[35]**，然后指针偏移7x3+4=25，直接取**a[25]**。
+### 数组定义与调用
+这一章我们将主要讲述数组定义和调用，包括全局数组，局部数组的定义，以及函数中的数组调用。对于全局数组定义，与全局变量一样，我们需要将所有量全部计算到特定的值。同时，对于全局数组，对数组中空缺的值，需要置0。对于全是0的地方，可以采用zeroinitializer来统一置0。
+```c
+int a[1+2+3+4]={1,1+1,1+3-1};
+int b[10][20];
+int c[5][5]={{1,2,3},{1,2,3,4,5}};
+```
+```llvm
+@a = dso_local global [10 x i32] [i32 1, i32 2, i32 3, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0]
+@b = dso_local global [10 x [20 x i32]] zeroinitializer
+@c = dso_local global [5 x [5 x i32]] [[5 x i32] [i32 1, i32 2, i32 3, i32 0, i32 0], [5 x i32] [i32 1, i32 2, i32 3, i32 4, i32 5], [5 x i32] zeroinitializer, [5 x i32] zeroinitializer, [5 x i32] zeroinitializer]
+```
+当然，zeroinitializer不是必须的，同学们完全可以一个个i32 0写进去，但对于一些很阴间的样例点，不用zeroinitializer可能会导致TLE，所以还是推荐同学们使用。
+
+对于局部数组，在定义的时候同样需要使用alloca指令，其存取指令同样采用load和store，只是在此之前需要采用getelementptr获取数组内应位置的地址。
+
+对于数组传参，其中涉及到维数的变化问题，例如，对于参数中含维度的数组，同学们可以参考上述getelementptr指令自行设计，因为该指令很灵活，所以下面的测试样例仅仅当一个参考。同学们可以将自己生成的llvm使用lli编译后自行查看输出比对。
 ### 测试样例
+```c
+int a[3+3]={1,2,3,4,5,6};
+int b[3][3]={{3,6+2,5},{1,2}};
+void a1(int x){
+    if(x>1){
+        a1(x-1);
+    }
+    return;
+}
+int a2(int x,int y[]){
+    return x+y[2];
+}
+int a3(int x,int y[],int z[][3]){
+    return x*y[1]-z[2][1];
+}
+int main(){
+    int c[2][3]={{1,2,3}};
+    a1(c[0][2]);
+    int x=a2(a[4],a);
+    int y=a3(b[0][1],b[1],b);
+    printf("%d",x+y);
+    return 0;
+}
+```
+```llvm
+declare i32 @getint()
+declare void @putint(i32)
+declare void @putch(i32)
+declare void @putstr(i8*)
+@a = dso_local global [6 x i32] [i32 1, i32 2, i32 3, i32 4, i32 5, i32 6]
+@b = dso_local global [3 x [3 x i32]] [[3 x i32] [i32 3, i32 8, i32 5], [3 x i32] [i32 1, i32 2, i32 0], [3 x i32] zeroinitializer]
+define dso_local void @a1(i32 %0) {
+    %2 = alloca i32
+    store i32 %0, i32 * %2
+    br label %3
+
+3:
+    %4 = load i32, i32* %2
+    %5 = icmp sgt i32 %4, 1
+    %6 = zext i1 %5 to i32
+    %7 = icmp ne i32 0, %6
+    br i1 %7, label %8, label %11
+
+8:
+    %9 = load i32, i32* %2
+    %10 = sub i32 %9, 1
+    call void @a1(i32 %10)
+    br label %11
+
+11:
+    ret void
+}
+define dso_local i32 @a2(i32 %0, i32* %1) {
+    %3 = alloca i32*
+    store i32* %1, i32* * %3
+    %4 = alloca i32
+    store i32 %0, i32 * %4
+    %5 = load i32, i32* %4
+    %6 = load i32*, i32* * %3
+    %7 = getelementptr i32, i32* %6, i32 2
+    %8 = load i32, i32* %7
+    %9 = add i32 %5, %8
+    ret i32 %9
+}
+define dso_local i32 @a3(i32 %0, i32* %1, [3 x i32] *%2) {
+    %4 = alloca [3 x i32]*
+    store [3 x i32]* %2, [3 x i32]* * %4
+    %5 = alloca i32*
+    store i32* %1, i32* * %5
+    %6 = alloca i32
+    store i32 %0, i32 * %6
+    %7 = load i32, i32* %6
+    %8 = load i32*, i32* * %5
+    %9 = getelementptr i32, i32* %8, i32 1
+    %10 = load i32, i32* %9
+    %11 = mul i32 %7, %10
+    %12 = load [3 x i32] *, [3 x i32]* * %4
+    %13 = getelementptr [3 x i32], [3 x i32]* %12, i32 2
+    %14 = getelementptr [3 x i32], [3 x i32]* %13, i32 0, i32 1
+    %15 = load i32, i32 *%14
+    %16 = sub i32 %11, %15
+    ret i32 %16
+}
+
+define dso_local i32 @main() {
+    %1 = alloca [2 x [ 3 x i32]]
+    %2 = getelementptr [2 x [3 x i32]], [2 x [3 x i32]]*%1, i32 0, i32 0, i32 0
+    store i32 1, i32* %2
+    %3 = getelementptr [2 x [3 x i32]], [2 x [3 x i32]]*%1, i32 0, i32 0, i32 1
+    store i32 2, i32* %3
+    %4 = getelementptr [2 x [3 x i32]], [2 x [3 x i32]]*%1, i32 0, i32 0, i32 2
+    store i32 3, i32* %4
+    %5 = getelementptr [2 x [3 x i32]], [2 x [3 x i32]]*%1, i32 0, i32 0, i32 2
+    %6 = load i32, i32* %5
+    call void @a1(i32 %6)
+    %7 = alloca i32
+    %8 = getelementptr [6 x i32], [6 x i32]* @a, i32 0, i32 4
+    %9 = load i32, i32* %8
+    %10 = getelementptr [6 x i32], [6 x i32]* @a, i32 0, i32 0
+    %11 = call i32 @a2(i32 %9, i32* %10)
+    store i32 %11, i32* %7
+    %12 = alloca i32
+    %13 = getelementptr [3 x [3 x i32]], [3 x [3 x i32]]* @b, i32 0, i32 0, i32 1
+    %14 = load i32, i32* %13
+    %15 = mul i32 1, 3
+    %16 = getelementptr [3 x [3 x i32]], [3 x [3 x i32]]* @b, i32 0, i32 0
+    %17 = getelementptr [3 x i32], [3 x i32]* %16, i32 0, i32 %15
+    %18 = getelementptr [3 x [3 x i32]], [3 x [3 x i32]]* @b, i32 0, i32 0
+    %19 = call i32 @a3(i32 %14, i32* %17, [3 x i32]* %18)
+    store i32 %19, i32* %12
+    %20 = load i32, i32* %7
+    %21 = load i32, i32* %12
+    %22 = add i32 %20, %21
+    call void @putint(i32 %22)
+    ret i32 0
+}
+```
+- 输出：24
