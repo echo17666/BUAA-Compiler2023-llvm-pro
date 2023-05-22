@@ -219,30 +219,31 @@ $ lli out.ll
 ### 主函数
 首先我们从最基本的开始，即只包含return语句的主函数（或没有参数的函数）。可能用到的文法包括
 ```c
-CompUnit -> FuncDef
-FuncDef  -> FuncType Ident '(' ')' Block
-FuncType -> 'int'
-Ident    -> 'main'
-Block        -> '{' { BlockItem } '}'
-BlockItem    -> Stmt
-Stmt     -> 'return' Number ';'
+CompUnit    → MainFuncDef
+MainFuncDef → 'int' 'main' '(' ')' Block
+Block       → '{' { BlockItem } '}' 
+BlockItem   → Stmt
+Stmt        → 'return' Exp ';' 
+Exp         → AddExp
+AddExp      → MulExp 
+MulExp      → UnaryExp 
+UnaryExp    → PrimaryExp
+PrimaryExp  → Number
 ```
 对于一个无参的函数，首先需要从AST获取函数的名称，返回值类型。然后分析函数体的Block。Block中的Stmt可以是return语句，也可以是其他语句，但是这里只考虑return语句。return语句中的Number在现在默认是**常数**。
 所以对于一个代码生成器，我们需要实现的功能有：
 - 遍历**AST**，遍历到函数时，获取函数的**名称**、**返回值类型**
-- 遍历到**Block**内的**Stmt**时，如果是**return**语句，生成或保存对应的**Instruction**
+- 遍历到**Block**内的**Stmt**时，如果是**return**语句，生成对应的**指令**
 ### 常量表达式
 新增内容有
 ```c
-Stmt       -> 'return' Exp ';'
-Exp        -> AddExp
-AddExp     -> MulExp 
-              | AddExp ('+' | '−') MulExp
-MulExp     -> UnaryExp
-              | MulExp ('*' | '/' | '%') UnaryExp
-UnaryExp   -> PrimaryExp | UnaryOp UnaryExp
-PrimaryExp -> '(' Exp ')' | Number
-UnaryOp    -> '+' | '-'
+Stmt       → 'return' [Exp] ';' 
+Exp        → AddExp
+AddExp     → MulExp | AddExp ('+' | '−') MulExp 
+MulExp     → UnaryExp | MulExp ('*' | '/' | '%') UnaryExp
+UnaryExp   → PrimaryExp | UnaryOp UnaryExp 
+PrimaryExp → '(' Exp ')' | Number
+UnaryOp    → '+' | '−'
 ``` 
 对于常量表达式，这里只包含常数的四则运算，正负号操作。这时候我们就需要用到之前的Value思想。举个例子，对于 `1+2+3*4`，我们生成的AST样式如下
 ![](image/1-1.png)
@@ -250,6 +251,8 @@ UnaryOp    -> '+' | '-'
 那么在生成的时候，我们的顺序是从左到右，从上到下。所以我们可以先生成 `1`，然后生成 `2`，然后生成 `1+2`，然后生成 `3`，然后生成 `4`，然后生成 `3*4`，最后生成 `1+2+3*4`。那对于1+2的**AddExp**，在其生成的指令中，1和2的值就类似于综合属性，即从AddExp的实例的值（3）由产生式右边的值（1和2）推导出来。而对于3\*4的**MulExp**，其生成的指令中3和4的值就类似于继承属性，即从MulExp的实例的值（12）由产生式左边的值（3和4）推导出来。最后，对于1+2+3\*4的**AddExp**，生成指令的实例的值就由产生式右边的AddExp的值（3）和MulExp的值（12）推导出来。
 
 同理，对于数字前的正负，我们可以看做是**0和其做一次AddExp**，即+1其实就是0+1 （其实正号甚至都不用去管） ，-1其实就是0-1。所以在生成代码的时候，可以当作一个特殊的AddExp来处理。
+
+> 特别注意：`MulExp → UnaryExp | MulExp ('*' | '/' | '%') UnaryExp`运算中，`%`模运算的代码生成不是mod哦
 ### 测试样例
 源程序
 ```c
@@ -304,17 +307,16 @@ define dso_local i32 @main() {
 ### 全局变量
 本章实验涉及的文法包括：
 ```c
-CompUnit ->  {Decl} FuncDef
-Decl         -> ConstDecl | VarDecl
-ConstDecl    -> 'const' BType ConstDef { ',' ConstDef } ';'
-BType        -> 'int'
-ConstDef     -> Ident '=' ConstInitVal
-ConstInitVal -> ConstExp
-ConstExp     -> AddExp
-VarDecl      -> BType VarDef { ',' VarDef } ';'
-VarDef       -> Ident 
-                | Ident '=' InitVal
-InitVal      -> Exp 
+CompUnit     → {Decl} MainFuncDef
+Decl         → ConstDecl | VarDecl
+ConstDecl    → 'const' BType ConstDef { ',' ConstDef } ';' 
+BType        → 'int' 
+ConstDef     → Ident  '=' ConstInitVal
+ConstInitVal → ConstExp
+ConstExp     → AddExp
+VarDecl      → BType VarDef { ',' VarDef } ';'
+VarDef       → Ident | Ident '=' InitVal
+InitVal      → Exp
 ```
 在llvm中，全局变量使用的是和函数一样的全局标识符 `@` ，所以全局变量的写法其实和函数的定义几乎一样。在我们的实验中，全局变/常量声明中指定的初值表达式必须是**常量表达式**。不妨举几个例子：
 ```c
@@ -332,8 +334,7 @@ int b=2+3;
 ### 局部变量
 本章内容涉及文法包括：
 ```c
-Block        -> '{' { BlockItem } '}'
-BlockItem    -> Decl | Stmt
+BlockItem → Decl | Stmt
 ```
 局部变量使用的标识符是 `%` 。与全局变量不同，局部变量在赋值前需要申请一块内存。在对局部变量操作的时候，我们也需要采用**load/store**来对内存进行操作。
 同样的，我们举个例子来说明一下：
@@ -353,9 +354,11 @@ store i32 %2, i32* %1
 
 涉及到的文法如下：
 ```c
-Stmt -> LVal '=' Exp ';' 
-      | [Exp] ';'
-      | 'return' Exp ';'
+Stmt       → LVal '=' Exp ';' 
+           | [Exp] ';'
+           | 'return' Exp ';'
+LVal       → Ident
+PrimaryExp → '(' Exp ')' | LVal | Number
 ```
 我们举个最简单的例子：
 ```c
@@ -504,15 +507,14 @@ echo $?的结果为**198**
 
 > 我相信各位如果去手动计算的话，会算出来结果是4550。然而由于echo $?的返回值只截取最后一个字节，也就是8位，所以 `4550 mod 256 = 198`
 
-###### 废话，这种例子当然是随便编的awa，结果是什么我自己都不知道。
+###### 废话，这种例子当然是随便编的awa
 ## 3. 函数的定义及调用
 > 本章主要涉及**不含数组**的函数的定义，调用等。
 ### 库函数
 涉及文法有：
 ```c
-Stmt         -> LVal '=' 'getint''('')'';'
-                | 'printf''('FormatString{','Exp}')'';' 
-
+Stmt → LVal '=' 'getint''('')'';'
+     | 'printf''('FormatString{','Exp}')'';'
 ```
 
 
@@ -562,14 +564,12 @@ define dso_local i32 @main() {
 ### 函数定义与调用
 涉及文法如下：
 ```c
-CompUnit     -> [CompUnit] (Decl | FuncDef)
-FuncDef      -> FuncType Ident '(' [FuncFParams] ')' Block 
-FuncType     -> 'void' | 'int' 
-FuncFParams  -> FuncFParam { ',' FuncFParam } 
-FuncFParam   -> BType Ident ['[' ']' { '[' Exp ']' }]
-UnaryExp     -> PrimaryExp
-                | Ident '(' [FuncRParams] ')'
-                | UnaryOp UnaryExp 
+CompUnit    → {Decl} {FuncDef} MainFuncDef
+FuncDef     → FuncType Ident '(' [FuncFParams] ')' Block 
+FuncType    → 'void' | 'int'
+FuncFParams → FuncFParam { ',' FuncFParam }
+FuncFParam  → BType Ident
+UnaryExp    → PrimaryExp | Ident '(' [FuncRParams] ')' | UnaryOp UnaryExp 
 ```
 其实之前的main函数也是一个函数，即主函数。这里我们将其拓广到一般函数。对于一个函数，其特征包括**函数名**，**函数返回类型**和**参数**。在本实验中，函数返回类型只有 **`int`** 和 **`void`** 两种。由于目前只有零维整数作为参数，所以参数的类型统一都是`i32`。FuncFParams之后的Block则与之前主函数内处理方法一样。值得一提的是，由于每个**临时寄存器**和**基本块**占用一个编号，所以没有参数的函数的第一个临时寄存器的编号应该从**1**开始，因为函数体入口占用了一个编号0。而有参数的函数，参数编号从**0**开始，进入Block后需要跳过一个基本块入口的编号（可以参考测试样例）。
 
@@ -639,22 +639,18 @@ define dso_local i32 @main(){
 ### 条件语句
 涉及文法如下
 ```c
-Stmt        -> 'if' '(' Cond ')' Stmt [ 'else' Stmt ]
-Cond        -> LOrExp 
-RelExp      -> AddExp
-             | RelExp ('<' | '>' | '<=' | '>=') AddExp
-EqExp       -> RelExp
-             | EqExp ('==' | '!=') RelExp
-LAndExp     -> EqExp
-             | LAndExp '&&' EqExp
-LOrExp      -> LAndExp
-             | LOrExp '||' LAndExp 
+Stmt    → 'if' '(' Cond ')' Stmt [ 'else' Stmt ]
+Cond    → LOrExp
+RelExp  → AddExp | RelExp ('<' | '>' | '<=' | '>=') AddExp
+EqExp   → RelExp | EqExp ('==' | '!=') RelExp
+LAndExp → EqExp | LAndExp '&&' EqExp
+LOrExp  → LAndExp | LOrExp '||' LAndExp 
 ```
 在条件语法中，我们需要进行条件的判断与选择。这时候就涉及到基本块的标号。在llvm中，每个**临时寄存器**和**基本块**占用一个编号。所以对于纯数字编号的llvm，这里就需要进行**回填**操作。对于在代码生成前已经完整生成符号表的同学，这里就会显得十分容易。对于在代码生成同时生成符号表的同学，也可以采用**栈**的方式去回填编号，对于采用字符串编号的则没有任何要求。
 
 要写出条件语句，首先要理清楚逻辑。在上述文法中，最重要的莫过于下面这一条语法
 ```c
-Stmt        -> 'if' '(' Cond ')' Stmt1 [ 'else' Stmt2 ]  (BasicBlock3)
+Stmt    → 'if' '(' Cond ')' Stmt1 [ 'else' Stmt2 ]  (BasicBlock3)
 ```
 为了方便说明，对上述文法的两个Stmt编号为Stmt1和2。在这条语句之后基本块假设叫BasicBlock3。不难发现，条件判断的逻辑如左下图。
 ![](image/4-1.png)
@@ -685,11 +681,9 @@ int main(){
 
 改写之前我们不妨思考一个问题，即什么时候跳转。根据短路求值，只要条件判断出现“短路”，即不需要考虑后续与或参数的情况下就已经能确定值的时候，就可以进行跳转。或者更简单的来说，当**LOrExp值为1**或者**LAndExp值为0**的时候，就已经没有必要再进行计算了。
 ```c
-Cond        -> LOrExp 
-LOrExp      -> LAndExp
-             | LOrExp '||' LAndExp 
-LAndExp     -> EqExp
-             | LAndExp '&&' EqExp
+Cond    → LOrExp
+LAndExp → LAndExp '&&' EqExp
+LOrExp  → LOrExp '||' LAndExp 
 ```
 - 对于连或来说，只要其中一个LOrExp或最后一个LAndExp为1，即可直接跳转Stmt1。
 - 对于连与来说，只要其中一个LAndExp或最后一个EqExp为0，则直接进入下一个LOrExp。如果当前为连或的最后一项，则直接跳转Stmt2（有else）或BasicBlock3（没else）
@@ -829,19 +823,183 @@ define dso_local i32 @main() {
 ### 循环
 涉及文法如下：
 ```c
-Stmt  -> 'for' '(' Cond ')' Stmt
-       | 'break' ';'
-       | 'continue' ';'
+Stmt    → 'for' '(' [forStmt] ';' [Cond] ';' [forStmt] ')' Stmt 
+        | 'break' ';'
+        | 'continue' ';'
+forStmt → LVal '=' Exp
 ```
-如果经过了上一章的学习，这一章其实难度就小了不少。对于文法，我们同样可以改写为
+如果经过了上一章的学习，这一章其实难度就小了不少。对于这条文法，同样可以改写为
 ```c
-Stmt  -> 'for' '(' Cond ')' Stmt (BasicBlock)
+Stmt    → 'for' '(' [forStmt1] ';' [Cond] ';' [forStmt2] ')' Stmt (BasicBlock)
 ```
-不难发现，对Cond=1，跳转到**Stmt**，对Cond=0，跳转到**BasicBlock**。而与之前不同的是，Stmt结束后都要跳转回Cond基本块进行条件的**再次判断**，以达到循环的目的。
+如果查询C语言的for循环，其中对for循环的描述为：
+```c
+for(initialization;condition;incr/decr){  
+   //code to be executed  
+}
+```
+不难发现，实验文法中的forStmt1，Cond，forStmt2分别表示了上述for循环中的**初始化(initialization)**，**条件(condition)**和**增量/减量(increment/decrement)**。同学们去搜索C语言的for循环逻辑的话也会发现，for循环的逻辑可以表述为
+- 1.执行初始化表达式forStmt1
+- 2.执行条件表达式Cond，如果为1执行循环体Stmt，否则结束循环执行BasicBlock
+- 3.执行完循环体Stmt后执行增量/减量表达式forStmt2
+- 4.重复执行步骤2和步骤3
+![](image/5-1.png)
+
+##### <p align="center">图 5-1 for循环流程图</p>
 ### break/continue
-对于`break`和`continue`，直观理解为，break**跳出循环**，continue**跳过本次循环**。再通俗点说就是，break跳转到的是**BasicBlock**，而continue跳转到的是**Cond**。这样就能达到我们的目的了。
+对于`break`和`continue`，直观理解为，break**跳出循环**，continue**跳过本次循环**。再通俗点说就是，break跳转到的是**BasicBlock**，而continue跳转到的是**Cond**。这样就能达到目的了。所以，对于循环而言，跳转的位置很重要。这也是同学们在编码的时候需要着重注意的点。
+
+同样的，针对这两条指令，对上图作出一定的修改，就是整个循环的流程图了。
+
+![](image/5-2.png)
+
+##### <p align="center">图 5-2 for循环完整流程图</p>
+### 测试样例
+```c
+int main(){    
+    int a1=1,a2;    
+    a2=a1;    
+    int temp; 
+    int n,i;
+    n=getint();   
+    for(i=a1*a1;i<n+1;i=i+1){     
+        temp=a2;
+        a2=a1+a2;
+        a1=temp;
+        if(i%2==1){
+            continue;
+        }
+        printf("round %d: %d\n",i,a1);
+        if(i>19){
+            break;
+        }
+    }   
+    return 0;    
+}
+```
+```llvm
+declare i32 @getint()
+declare void @putint(i32)
+declare void @putch(i32)
+declare void @putstr(i8*)
+define dso_local i32 @main() {
+    %1 = alloca i32
+    store i32 1, i32* %1
+    %2 = alloca i32
+    %3 = load i32, i32* %1
+    store i32 %3, i32* %2
+    %4 = alloca i32
+    %5 = alloca i32
+    %6 = alloca i32
+    %7 = call i32 @getint()
+    store i32 %7, i32* %5
+    %8 = load i32, i32* %1
+    %9 = load i32, i32* %1
+    %10 = mul i32 %8, %9
+    store i32 %10, i32* %6
+    br label %11
+
+11:
+    %12 = load i32, i32* %6
+    %13 = load i32, i32* %5
+    %14 = add i32 %13, 1
+    %15 = icmp slt i32 %12, %14
+    %16 = zext i1 %15 to i32
+    %17 = icmp ne i32 0, %16
+    br i1 %17, label %18, label %44
+
+18:
+    %19 = load i32, i32* %2
+    store i32 %19, i32* %4
+    %20 = load i32, i32* %2
+    %21 = load i32, i32* %1
+    %22 = load i32, i32* %2
+    %23 = add i32 %21, %22
+    store i32 %23, i32* %2
+    %24 = load i32, i32* %4
+    store i32 %24, i32* %1
+    br label %25
+
+25:
+    %26 = load i32, i32* %6
+    %27 = srem i32 %26, 2
+    %28 = icmp eq i32 %27, 1
+    %29 = zext i1 %28 to i32
+    %30 = icmp ne i32 0, %29
+    br i1 %30, label %31, label %32
+
+31:
+    br label %41
+
+32:
+    %33 = load i32, i32* %6
+    %34 = load i32, i32* %1
+    call void @putch(i32 114)
+    call void @putch(i32 111)
+    call void @putch(i32 117)
+    call void @putch(i32 110)
+    call void @putch(i32 100)
+    call void @putch(i32 32)
+    call void @putint(i32 %33)
+    call void @putch(i32 58)
+    call void @putch(i32 32)
+    call void @putint(i32 %34)
+    call void @putch(i32 10)
+    br label %35
+
+35:
+    %36 = load i32, i32* %6
+    %37 = icmp sgt i32 %36, 19
+    %38 = zext i1 %37 to i32
+    %39 = icmp ne i32 0, %38
+    br i1 %39, label %40, label %41
+
+40:
+    br label %44
+
+41:
+    %42 = load i32, i32* %6
+    %43 = add i32 %42, 1
+    store i32 %43, i32* %6
+    br label %11
+
+44:
+    ret i32 0
+}
+```
+- 输入：10
+- 输出：
+                
+        round 2: 2
+        round 4: 5
+        round 6: 13
+        round 8: 34
+        round 10: 89
+- 输入：40
+- 输出：
+- 
+        round 2: 2
+        round 4: 5
+        round 6: 13
+        round 8: 34
+        round 10: 89
+        round 12: 233
+        round 14: 610
+        round 16: 1597
+        round 18: 4181
+        round 20: 10946
+> 本质为一个只输出20以内偶数项的斐波那契数列
 ## 6. 数组与函数
 ### 数组
+数组涉及的文法相当多，包括以下几条：
+```c
+ConstDef     → Ident { '[' ConstExp ']' } '=' ConstInitVal
+ConstInitVal → ConstExp | '{' [ ConstInitVal { ',' ConstInitVal } ] '}'
+VarDef       → Ident { '[' ConstExp ']' } | Ident { '[' ConstExp ']' } '=' InitVal
+InitVal      → Exp | '{' [ InitVal { ',' InitVal } ] '}'
+FuncFParam   → BType Ident ['[' ']' { '[' ConstExp ']' }]
+LVal         → Ident {'[' Exp ']'}
+```
 在数组的编写中，同学们会频繁用到 **`getElementPtr`** 指令，故先系统介绍一下这个指令的用法。
 
 getElementPtr指令的工作是计算地址。其本身不对数据做任何访问与修改。其语法如下：
