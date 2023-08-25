@@ -824,14 +824,14 @@ define dso_local i32 @main() {
 ### 循环
 涉及文法如下：
 ```c
-Stmt    → 'for' '(' [forStmt] ';' [Cond] ';' [forStmt] ')' Stmt 
+Stmt    → 'for' '(' [ForStmt] ';' [Cond] ';' [ForStmt] ')' Stmt 
         | 'break' ';'
         | 'continue' ';'
-forStmt → LVal '=' Exp
+ForStmt → LVal '=' Exp
 ```
 如果经过了上一章的学习，这一章其实难度就小了不少。对于这条文法，同样可以改写为
 ```c
-Stmt    → 'for' '(' [forStmt1] ';' [Cond] ';' [forStmt2] ')' Stmt (BasicBlock)
+Stmt    → 'for' '(' [ForStmt1] ';' [Cond] ';' [ForStmt2] ')' Stmt (BasicBlock)
 ```
 如果查询C语言的for循环，其中对for循环的描述为：
 ```c
@@ -839,17 +839,17 @@ for(initialization;condition;incr/decr){
    //code to be executed  
 }
 ```
-不难发现，实验文法中的forStmt1，Cond，forStmt2分别表示了上述for循环中的**初始化(initialization)**，**条件(condition)**和**增量/减量(increment/decrement)**。同学们去搜索C语言的for循环逻辑的话也会发现，for循环的逻辑可以表述为
-- 1.执行初始化表达式forStmt1
+不难发现，实验文法中的ForStmt1，Cond，ForStmt2分别表示了上述for循环中的**初始化(initialization)**，**条件(condition)**和**增量/减量(increment/decrement)**。同学们去搜索C语言的for循环逻辑的话也会发现，for循环的逻辑可以表述为
+- 1.执行初始化表达式ForStmt1
 - 2.执行条件表达式Cond，如果为1执行循环体Stmt，否则结束循环执行BasicBlock
-- 3.执行完循环体Stmt后执行增量/减量表达式forStmt2
+- 3.执行完循环体Stmt后执行增量/减量表达式ForStmt2
 - 4.重复执行步骤2和步骤3
 
 ![](image/5-1.png)
 
 ##### <p align="center">图 5-1 for循环流程图</p>
 ### break/continue
-对于`break`和`continue`，直观理解为，break**跳出循环**，continue**跳过本次循环**。再通俗点说就是，break跳转到的是**BasicBlock**，而continue跳转到的是**Cond**。这样就能达到目的了。所以，对于循环而言，跳转的位置很重要。这也是同学们在编码的时候需要着重注意的点。
+对于`break`和`continue`，直观理解为，break**跳出循环**，continue**跳过本次循环**。再通俗点说就是，break跳转到的是**BasicBlock**，而continue跳转到的是**ForStmt2**。这样就能达到目的了。所以，对于循环而言，跳转的位置很重要。这也是同学们在编码的时候需要着重注意的点。
 
 同样的，针对这两条指令，对上图作出一定的修改，就是整个循环的流程图了。
 
