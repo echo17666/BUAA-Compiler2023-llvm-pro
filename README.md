@@ -4,4 +4,4 @@
 
 ## 仙人指路
 - 前端：<a href="https://github.com/echo17666/BUAA-Compiler2023-llvm-pro/blob/master/前端.md">前端</a>
-- 中端：<a href="https://github.com/echo17666/BUAA-Compiler2023-llvm-pro/blob/master/llvm.md">前端</a>
+- 中端：<a href="https://github.com/echo17666/BUAA-Compiler2023-llvm-pro/blob/master/llvm.md">中端</a>
